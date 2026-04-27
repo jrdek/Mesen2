@@ -1,3 +1,4 @@
+#include "NES/NesConsole.h"
 #include "pch.h"
 #include "LuaApi.h"
 #include "Lua/lua.hpp"
@@ -29,6 +30,10 @@
 #include "Utilities/FolderUtilities.h"
 #include "Utilities/magic_enum.hpp"
 #include "Shared/MemoryOperationType.h"
+
+// TODO: cleanup or generalize
+#include "Core/NES/NesCpu.h"
+#include "Core/NES/NesPpu.h"
 
 #ifdef _MSC_VER
 //TODO MSVC seems to trigger this by mistake because of the macros?
@@ -149,6 +154,8 @@ int LuaApi::GetLibrary(lua_State *lua)
 
 		{ "createSavestate", LuaApi::CreateSavestate },
 		{ "loadSavestate", LuaApi::LoadSavestate },
+
+		{ "getNesData", LuaApi::GetNesData },
 
 		{ "getState", LuaApi::GetState },
 		{ "setState", LuaApi::SetState },
@@ -1067,6 +1074,46 @@ int LuaApi::LoadSavestate(lua_State* lua)
 	l.Return(result);
 	return l.ReturnCount();
 }
+
+int LuaApi::GetNesData(lua_State* lua)
+{
+	LuaCallHelper l(lua);
+	string field = l.ReadString();
+	checkparams();
+
+	if (_emu->GetConsoleType() != ConsoleType::Nes) {
+		error("emu.getNesData() only works with NES emulation")
+	}
+
+	NesConsole* nesConsole = (NesConsole*) _emu->GetConsole().get();
+	NesCpu* nesCpu = nesConsole->GetCpu();
+	BaseNesPpu* nesPpu = nesConsole->GetPpu();
+
+	// TODO: make this tidier
+	if (field == "ppuFrame") {
+		l.Return(nesPpu->GetFrameCount());
+	} else if (field == "cpuCycle") {
+		l.Return(nesCpu->GetCycleCount());
+	} else if (field == "A") {
+		l.Return(nesCpu->GetState().A);
+	} else if (field == "X") {
+		l.Return(nesCpu->GetState().X);
+	} else if (field == "Y") {
+		l.Return(nesCpu->GetState().Y);
+	} else if (field == "SP") {
+		l.Return(nesCpu->GetState().SP);
+	} else if (field == "PC") {
+		l.Return(nesCpu->GetState().PC);
+	} else {
+		const char* UNK_FIELD_TEMPLATE = "Unknown field: %s";
+		char* unkFieldErr = (char*) malloc(strlen(UNK_FIELD_TEMPLATE) - 2 + field.length() + 1);
+		snprintf(unkFieldErr, sizeof(unkFieldErr), UNK_FIELD_TEMPLATE, field.c_str());
+		error(unkFieldErr);
+	}
+	return l.ReturnCount();
+
+}
+
 
 int LuaApi::GetState(lua_State *lua)
 {

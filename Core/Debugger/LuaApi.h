@@ -72,6 +72,8 @@ public:
 	static int CreateSavestate(lua_State *lua);
 	static int LoadSavestate(lua_State *lua);
 
+	static int GetNesData(lua_State* lua);
+
 	static int IsKeyPressed(lua_State *lua);
 
 	static int GetInput(lua_State *lua);
