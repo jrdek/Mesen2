@@ -32,7 +32,12 @@ ScriptingContext::~ScriptingContext()
 		//Cleanup all references, this is required to prevent crashes that can occur when calling lua_close
 		std::unordered_set<int> references;
 		for(int i = (int)CallbackType::Read; i <= (int)CallbackType::Exec; i++) {
-			for(MemoryCallback& callback : _callbacks[i]) {
+			for (const auto& [_addr, callbackVec] : _singlebyteCallbacks[i]) {
+				for (const MemoryCallback& callback : callbackVec) {
+					references.emplace(callback.Reference);
+				}
+			}
+			for(MemoryCallback& callback : _multibyteCallbacks[i]) {
 				references.emplace(callback.Reference);
 			}
 		}
@@ -228,14 +233,30 @@ void ScriptingContext::RegisterMemoryCallback(CallbackType type, int startAddr, 
 		_debugger->GetScriptManager()->EnableCpuMemoryCallbacks();
 	}
 
-	_callbacks[(int)type].push_back(callback);
+	vector<MemoryCallback>& callbackVec =
+		(callback.StartAddress == callback.EndAddress)
+		? _singlebyteCallbacks[(int) type][callback.StartAddress]
+		: _multibyteCallbacks[(int) type];
+
+	callbackVec.push_back(callback);
 }
 
 void ScriptingContext::RefreshMemoryCallbackFlags()
 {
+	// jrdek CHECKME: isn't this hugely wasteful?
+	// and TODO: dedupe code
 	for(int i = (int)CallbackType::Read; i <= (int)CallbackType::Exec; i++) {
-		for(size_t j = 0, len = _callbacks[i].size(); j < len; j++) {
-			if(DebugUtilities::IsPpuMemory(_callbacks[i][j].MemType)) {
+		for (const auto& [_addr, callbackVec] : _singlebyteCallbacks[i]) {
+			for(size_t j = 0, len = callbackVec.size(); j < len; j++) {
+			if(DebugUtilities::IsPpuMemory(callbackVec[j].MemType)) {
+				_debugger->GetScriptManager()->EnablePpuMemoryCallbacks();
+			} else {
+				_debugger->GetScriptManager()->EnableCpuMemoryCallbacks();
+			}
+		}
+		}
+		for(size_t j = 0, len = _multibyteCallbacks[i].size(); j < len; j++) {
+			if(DebugUtilities::IsPpuMemory(_multibyteCallbacks[i][j].MemType)) {
 				_debugger->GetScriptManager()->EnablePpuMemoryCallbacks();
 			} else {
 				_debugger->GetScriptManager()->EnableCpuMemoryCallbacks();
@@ -250,8 +271,27 @@ void ScriptingContext::UnregisterMemoryCallback(CallbackType type, int startAddr
 		return;
 	}
 
-	for(size_t i = 0; i < _callbacks[(int)type].size(); i++) {
-		MemoryCallback &callback = _callbacks[(int)type][i];
+	if (endAddr == startAddr) {
+		for (size_t i = 0; i < _singlebyteCallbacks[(int) type][startAddr].size(); i++) {
+			// jrdek TODO: dedupe code
+			MemoryCallback &callback = _singlebyteCallbacks[(int) type][startAddr][i];
+			bool isMatch = (
+				callback.Reference == reference &&
+				callback.Cpu == cpuType &&
+				callback.MemType == memType &&
+				(int)callback.StartAddress == startAddr &&
+				(int)callback.EndAddress == endAddr
+			);
+
+			if(isMatch) {
+				_singlebyteCallbacks[(int) type][startAddr].erase(_singlebyteCallbacks[(int) type][startAddr].begin() + i);
+				break;
+			}
+		}
+	}
+
+	for(size_t i = 0; i < _multibyteCallbacks[(int)type].size(); i++) {
+		MemoryCallback &callback = _multibyteCallbacks[(int)type][i];
 		bool isMatch = (
 			callback.Reference == reference &&
 			callback.Cpu == cpuType &&
@@ -261,7 +301,7 @@ void ScriptingContext::UnregisterMemoryCallback(CallbackType type, int startAddr
 		);
 
 		if(isMatch) {
-			_callbacks[(int)type].erase(_callbacks[(int)type].begin() + i);
+			_multibyteCallbacks[(int)type].erase(_multibyteCallbacks[(int)type].begin() + i);
 			break;
 		}
 	}
@@ -289,7 +329,10 @@ bool ScriptingContext::IsAddressMatch(MemoryCallback& callback, AddressInfo addr
 template<typename T>
 void ScriptingContext::InternalCallMemoryCallback(AddressInfo relAddr, T& value, CallbackType type, CpuType cpuType)
 {
-	if(_callbacks[(int)type].empty()) {
+	if(
+		_multibyteCallbacks[(int)type].empty()
+	 && _singlebyteCallbacks[(int) type][relAddr.Address].empty()
+	) {
 		return;
 	}
 
@@ -297,7 +340,45 @@ void ScriptingContext::InternalCallMemoryCallback(AddressInfo relAddr, T& value,
 	bool needTimerReset = true;
 	lua_setwatchdogtimer(_lua, ScriptingContext::ExecutionCountHook, 1000);
 	LuaApi::SetContext(this);
-	for(MemoryCallback& callback : _callbacks[(int)type]) {
+
+	// jrdek TODO: dedupe code
+	for (MemoryCallback& callback : _singlebyteCallbacks[(int) type][relAddr.Address]) {
+		if(callback.Cpu != cpuType) {
+			continue;
+		} 
+
+		if(DebugUtilities::IsRelativeMemory(callback.MemType)) {
+			if(!IsAddressMatch(callback, relAddr)) {
+				continue;
+			}
+		} else {
+			if(!IsAddressMatch(callback, _debugger->GetAbsoluteAddress(relAddr))) {
+				continue;
+			}
+		}
+
+		if(needTimerReset) {
+			_timer.Reset();
+			needTimerReset = false;
+		}
+
+		int top = lua_gettop(_lua);
+		lua_rawgeti(_lua, LUA_REGISTRYINDEX, callback.Reference);
+		lua_pushinteger(_lua, relAddr.Address);
+		lua_pushinteger(_lua, value);
+		if(lua_pcall(_lua, 2, LUA_MULTRET, 0) != 0) {
+			ProcessLuaError();
+		} else {
+			int returnParamCount = lua_gettop(_lua) - top;
+			if(returnParamCount && lua_isinteger(_lua, -1)) {
+				int newValue = (int)lua_tointeger(_lua, -1);
+				value = (T)newValue;
+			}
+			lua_settop(_lua, top);
+		}
+	}
+
+	for(MemoryCallback& callback : _multibyteCallbacks[(int)type]) {
 		if(callback.Cpu != cpuType) {
 			continue;
 		} 

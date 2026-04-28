@@ -1,6 +1,7 @@
 #pragma once
 #include "pch.h"
 #include <deque>
+#include <utility>
 #include "Utilities/SimpleLock.h"
 #include "Utilities/Timer.h"
 #include "Debugger/DebugTypes.h"
@@ -57,7 +58,11 @@ protected:
 	string _scriptName;
 	bool _initDone = false;
 
-	vector<MemoryCallback> _callbacks[3];
+	unordered_map<
+		decltype(std::declval<AddressInfo>().Address),
+		vector<MemoryCallback>
+	> _singlebyteCallbacks[3];  // i.e., an array of three unordered maps (addr -> vector of callbacks)
+	vector<MemoryCallback> _multibyteCallbacks[3];
 	vector<int> _eventCallbacks[(int)EventType::LastValue + 1];
 
 	template<typename T> void InternalCallMemoryCallback(AddressInfo relAddr, T& value, CallbackType type, CpuType cpuType);
