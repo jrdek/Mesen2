@@ -110,6 +110,9 @@ ifeq ($(MESENOS),osx)
 	LINKOPTIONS += -framework Foundation -framework Cocoa -framework GameController -framework CoreHaptics -Wl,-rpath,/opt/local/lib
 endif
 
+# allow lua to dlopen libraries. (not sure if this works on windows...)
+MESENFLAGS += -DLUA_USE_DLOPEN
+
 CXXFLAGS = -fPIC -Wall --std=c++17 $(MESENFLAGS) $(SDL2INC) -I $(realpath ./) -I $(realpath ./Core) -I $(realpath ./Utilities) -I $(realpath ./Sdl) -I $(realpath ./Linux) -I $(realpath ./MacOS)
 OBJCXXFLAGS = $(CXXFLAGS)
 CFLAGS = -fPIC -Wall $(MESENFLAGS)
