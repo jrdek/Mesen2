@@ -118,6 +118,10 @@ bool ScriptingContext::LoadScript(string scriptName, string path, string scriptC
 void ScriptingContext::ProcessLuaError()
 {
 	string errorMsg = lua_tostring(_lua, -1);
+
+	fprintf(stderr, "[[[LUA?!%s]]] %s\n", _scriptName.c_str(), errorMsg.c_str());
+	fflush(stderr);
+
 	if(StringUtilities::Contains(errorMsg, "attempt to call a nil value (global 'require')") || StringUtilities::Contains(errorMsg, "attempt to index a nil value (global 'os')") || StringUtilities::Contains(errorMsg, "attempt to index a nil value (global 'io')")) {
 		Log("I/O and OS libraries are disabled by default for security.\nYou can enable them here:\nScript->Settings->Script Window->Restrictions->Allow access to I/O and OS functions.");
 	} else if(StringUtilities::Contains(errorMsg, "module 'socket.core' not found")) {
