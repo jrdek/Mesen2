@@ -31,7 +31,7 @@ namespace Mesen.Config
 
 		[Reactive] public bool ShowLineNumbers { get; set; } = false;
 
-		[Reactive] public UInt32 ScriptTimeout { get; set; } = 1;
+		[MinMax(1, 1000)] public UInt32 ScriptTimeout { get; set; } = 1;
 
 		public void AddRecentScript(string scriptFile)
 		{
